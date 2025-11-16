@@ -1,0 +1,169 @@
+# Pre-commit Framework Configuration for Secure-Push
+# Alternative to git hooks - uses the pre-commit framework
+# Install: pip install pre-commit
+# Setup: pre-commit install
+# Run manually: pre-commit run --all-files
+
+# This provides the same security scanning as secure-push
+# but integrated with the pre-commit framework
+
+repos:
+  # Gitleaks - Secret Detection
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: 🔍 Detect secrets with Gitleaks
+        description: Scan for hardcoded secrets, API keys, and credentials
+        entry: gitleaks detect --no-banner --redact
+        args:
+          - --config=.claude/skills/secure-push/configs/gitleaks.toml
+          - --source=.
+        language: system
+        pass_filenames: false
+        stages: [commit, push]
+
+  # Semgrep - SAST Code Analysis
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.45.0
+    hooks:
+      - id: semgrep
+        name: 🔎 Analyze code with Semgrep
+        description: Static analysis for security vulnerabilities
+        entry: semgrep scan
+        args:
+          - --config=p/security-audit
+          - --config=p/owasp-top-ten
+          - --config=.claude/skills/secure-push/configs/semgrep.yaml
+          - --config=.claude/skills/secure-push/configs/languages/
+          - --error
+          - --quiet
+          - --metrics=off
+        language: system
+        pass_filenames: false
+        stages: [commit, push]
+
+  # Trivy - Dependency & Vulnerability Scanning
+  - repo: local
+    hooks:
+      - id: trivy-fs
+        name: 🔬 Scan dependencies with Trivy
+        description: Check for CVEs in dependencies
+        entry: trivy fs
+        args:
+          - --severity=CRITICAL,HIGH
+          - --exit-code=1
+          - --quiet
+          - .
+        language: system
+        pass_filenames: false
+        stages: [push]
+        # Only run on dependency file changes
+        files: |
+          (?x)^(
+            package\.json|
+            package-lock\.json|
+            yarn\.lock|
+            pnpm-lock\.yaml|
+            requirements\.txt|
+            Pipfile\.lock|
+            poetry\.lock|
+            go\.mod|
+            go\.sum|
+            Gemfile\.lock|
+            composer\.lock|
+            pom\.xml
+          )$
+
+# Additional security hooks (optional)
+
+  # Detect private keys
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: detect-private-key
+        name: 🔑 Detect private keys
+        stages: [commit]
+
+      - id: check-added-large-files
+        name: 📦 Check for large files
+        args: ['--maxkb=1000']
+        stages: [commit]
+
+      - id: check-merge-conflict
+        name: 🔀 Check for merge conflicts
+        stages: [commit]
+
+      - id: check-yaml
+        name: ✅ Validate YAML files
+        stages: [commit]
+
+      - id: check-json
+        name: ✅ Validate JSON files
+        stages: [commit]
+
+      - id: end-of-file-fixer
+        name: 📝 Fix end of files
+        stages: [commit]
+
+      - id: trailing-whitespace
+        name: 📝 Trim trailing whitespace
+        stages: [commit]
+
+# Language-specific hooks
+
+  # Python
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        name: 🐍 Python security check (Bandit)
+        args: ['-ll', '-r', '.']
+        files: \.py$
+        stages: [commit]
+
+  # JavaScript/TypeScript
+  - repo: https://github.com/eslint/eslint
+    rev: v8.54.0
+    hooks:
+      - id: eslint
+        name: 📜 JavaScript/TypeScript linting
+        files: \.(js|ts|jsx|tsx)$
+        types: [file]
+        args: ['--fix']
+        stages: [commit]
+        # Only if .eslintrc exists
+        pass_filenames: true
+
+# Configuration
+default_stages: [commit, push]
+fail_fast: false  # Continue running hooks even if one fails
+minimum_pre_commit_version: '2.20.0'
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+    .*\.min\.(js|css)$|
+    node_modules/|
+    vendor/|
+    \.venv/|
+    venv/|
+    build/|
+    dist/|
+    \.git/|
+    __pycache__/|
+    \.pytest_cache/|
+    \.mypy_cache/|
+    coverage/
+  )
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

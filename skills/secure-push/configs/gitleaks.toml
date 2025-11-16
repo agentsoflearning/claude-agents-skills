@@ -1,0 +1,222 @@
+# Gitleaks Configuration for Secure-Push
+# https://github.com/gitleaks/gitleaks
+
+title = "Gitleaks Config for Secure-Push"
+
+# Extend the default ruleset
+[extend]
+useDefault = true
+
+# Additional custom rules for common secrets
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey)['"]\s*[:=]\s*['"][a-z0-9]{20,}['"]'''
+tags = ["api", "key", "generic"]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key ID"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+tags = ["aws", "credentials"]
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS Secret Access Key"
+regex = '''(?i)aws(.{0,20})?['"]\s*[:=]\s*['"][a-z0-9/+=]{40}['"]'''
+tags = ["aws", "credentials"]
+
+[[rules]]
+id = "github-pat"
+description = "GitHub Personal Access Token"
+regex = '''ghp_[a-zA-Z0-9]{36}'''
+tags = ["github", "token"]
+
+[[rules]]
+id = "github-oauth"
+description = "GitHub OAuth Token"
+regex = '''gho_[a-zA-Z0-9]{36}'''
+tags = ["github", "token"]
+
+[[rules]]
+id = "github-app-token"
+description = "GitHub App Token"
+regex = '''(ghu|ghs)_[a-zA-Z0-9]{36}'''
+tags = ["github", "token"]
+
+[[rules]]
+id = "slack-token"
+description = "Slack Token"
+regex = '''xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,32}'''
+tags = ["slack", "token"]
+
+[[rules]]
+id = "slack-webhook"
+description = "Slack Webhook URL"
+regex = '''https://hooks\.slack\.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}'''
+tags = ["slack", "webhook"]
+
+[[rules]]
+id = "google-api-key"
+description = "Google API Key"
+regex = '''AIza[0-9A-Za-z\\-_]{35}'''
+tags = ["google", "api", "key"]
+
+[[rules]]
+id = "google-oauth"
+description = "Google OAuth Token"
+regex = '''ya29\.[0-9A-Za-z\-_]+'''
+tags = ["google", "oauth"]
+
+[[rules]]
+id = "heroku-api-key"
+description = "Heroku API Key"
+regex = '''(?i)heroku(.{0,20})?['"]\s*[:=]\s*['"][a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}['"]'''
+tags = ["heroku", "api", "key"]
+
+[[rules]]
+id = "stripe-api-key"
+description = "Stripe API Key"
+regex = '''(sk|pk)_(live|test)_[a-zA-Z0-9]{24,}'''
+tags = ["stripe", "api", "key"]
+
+[[rules]]
+id = "twilio-api-key"
+description = "Twilio API Key"
+regex = '''SK[a-f0-9]{32}'''
+tags = ["twilio", "api", "key"]
+
+[[rules]]
+id = "mailgun-api-key"
+description = "Mailgun API Key"
+regex = '''key-[a-f0-9]{32}'''
+tags = ["mailgun", "api", "key"]
+
+[[rules]]
+id = "sendgrid-api-key"
+description = "SendGrid API Key"
+regex = '''SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}'''
+tags = ["sendgrid", "api", "key"]
+
+[[rules]]
+id = "jwt-token"
+description = "JSON Web Token"
+regex = '''eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*'''
+tags = ["jwt", "token"]
+
+[[rules]]
+id = "private-key"
+description = "Private Key"
+regex = '''-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'''
+tags = ["private", "key"]
+
+[[rules]]
+id = "ssh-private-key"
+description = "SSH Private Key"
+regex = '''-----BEGIN OPENSSH PRIVATE KEY-----'''
+tags = ["ssh", "private", "key"]
+
+[[rules]]
+id = "password-in-url"
+description = "Password in URL"
+regex = '''[a-zA-Z]{3,10}://[^/\s:@]{3,20}:[^/\s:@]{3,20}@.{1,100}'''
+tags = ["password", "url"]
+
+[[rules]]
+id = "database-connection-string"
+description = "Database Connection String"
+regex = '''(?i)(mongodb|mysql|postgresql|postgres|jdbc)://[^\s"']+'''
+tags = ["database", "connection"]
+
+[[rules]]
+id = "npm-token"
+description = "NPM Token"
+regex = '''npm_[a-zA-Z0-9]{36}'''
+tags = ["npm", "token"]
+
+[[rules]]
+id = "pypi-token"
+description = "PyPI Token"
+regex = '''pypi-[a-zA-Z0-9_-]{40,}'''
+tags = ["pypi", "token"]
+
+[[rules]]
+id = "docker-hub-token"
+description = "Docker Hub Token"
+regex = '''dckr_pat_[a-zA-Z0-9_-]{40,}'''
+tags = ["docker", "token"]
+
+[[rules]]
+id = "gitlab-token"
+description = "GitLab Token"
+regex = '''glpat-[a-zA-Z0-9_-]{20,}'''
+tags = ["gitlab", "token"]
+
+[[rules]]
+id = "azure-client-secret"
+description = "Azure Client Secret"
+regex = '''(?i)azure(.{0,20})?client[_-]?secret(.{0,20})?['"]\s*[:=]\s*['"][a-z0-9~._-]{32,}['"]'''
+tags = ["azure", "credentials"]
+
+# Allowlist common false positives
+[allowlist]
+description = "Global allowlist for common false positives"
+
+# Paths to exclude
+paths = [
+    '''^\.git/''',
+    '''^node_modules/''',
+    '''^vendor/''',
+    '''^\.venv/''',
+    '''^venv/''',
+    '''^\.env\.example$''',
+    '''^\.env\.sample$''',
+    '''^\.env\.template$''',
+    '''^\.env\.dist$''',
+    '''^package-lock\.json$''',
+    '''^yarn\.lock$''',
+    '''^poetry\.lock$''',
+    '''^Pipfile\.lock$''',
+    '''^go\.sum$''',
+    '''^Gemfile\.lock$''',
+    '''^composer\.lock$''',
+    '''\.min\.js$''',
+    '''\.min\.css$''',
+    '''^public/assets/''',
+    '''^dist/''',
+    '''^build/''',
+    '''^\.next/''',
+    '''^\.nuxt/''',
+    '''^coverage/''',
+    '''^\.claude/skills/secure-push/''',  # Don't scan the skill itself
+]
+
+# Regexes to exclude (common false positives)
+regexes = [
+    '''example\.com''',
+    '''localhost''',
+    '''127\.0\.0\.1''',
+    '''0\.0\.0\.0''',
+    '''TODO''',
+    '''FIXME''',
+    '''XXX''',
+    '''CHANGEME''',
+    '''your-api-key-here''',
+    '''YOUR_API_KEY''',
+    '''<API_KEY>''',
+    '''{{api_key}}''',
+    '''\$\{API_KEY\}''',
+    '''process\.env\.[A-Z_]+''',
+    '''os\.getenv\(['"'][A-Z_]+['"']\)''',
+]
+
+# Stop words - common variable names that aren't secrets
+stopwords = [
+    "example",
+    "sample",
+    "test",
+    "demo",
+    "placeholder",
+    "redacted",
+]

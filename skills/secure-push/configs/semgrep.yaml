@@ -1,0 +1,73 @@
+# Semgrep Configuration for Secure-Push
+# Base security rules for cross-language scanning
+# https://semgrep.dev/docs/
+
+rules:
+  # Use Semgrep's curated security rulesets
+  # These are automatically pulled from the Semgrep registry
+
+  # OWASP Top 10 2021 Rules
+  - id: use-owasp-top-10
+    mode: search
+    pattern: placeholder  # This is replaced by auto config
+    severity: WARNING
+    message: Using OWASP Top 10 ruleset
+    languages: [generic]
+
+  # Security Best Practices
+  - id: use-security-audit
+    mode: search
+    pattern: placeholder
+    severity: WARNING
+    message: Using security audit ruleset
+    languages: [generic]
+
+# Note: The actual scanning will use:
+# semgrep --config=auto (recommended rules)
+# semgrep --config=p/security-audit (security-focused)
+# semgrep --config=p/owasp-top-ten (OWASP Top 10)
+# semgrep --config=p/cwe-top-25 (CWE Top 25)
+
+# Language-specific configs override this base config
+# See: configs/languages/ directory
+
+# Configuration options
+options:
+  # Exclude common directories
+  exclude:
+    - "node_modules/"
+    - "vendor/"
+    - ".venv/"
+    - "venv/"
+    - "env/"
+    - ".env/"
+    - "build/"
+    - "dist/"
+    - "target/"
+    - "*.min.js"
+    - "*.min.css"
+    - "*.bundle.js"
+    - "*.generated.*"
+    - "*.pb.go"
+    - "*_pb2.py"
+    - ".git/"
+    - ".next/"
+    - ".nuxt/"
+    - "__pycache__/"
+    - "*.pyc"
+    - "coverage/"
+    - ".coverage"
+    - "htmlcov/"
+    - ".pytest_cache/"
+    - ".mypy_cache/"
+    - ".tox/"
+    - "*.egg-info/"
+
+  # Max file size (in bytes) to scan
+  max_target_bytes: 1000000  # 1MB
+
+  # Timeout per file (seconds)
+  timeout: 30
+
+  # Number of parallel jobs
+  jobs: 4

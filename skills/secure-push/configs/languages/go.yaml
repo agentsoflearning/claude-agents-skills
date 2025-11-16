@@ -1,0 +1,549 @@
+# Semgrep Rules for Go (Golang)
+# Optimized for Go web services, gRPC, cloud-native applications
+# Security-focused patterns for common vulnerabilities
+
+rules:
+  # SQL Injection
+  - id: go-sql-injection-format
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.Query(fmt.Sprintf(..., $INPUT, ...), ...)
+          - pattern: |
+              $DB.Exec(fmt.Sprintf(..., $INPUT, ...), ...)
+          - pattern: |
+              $DB.QueryRow(fmt.Sprintf(..., $INPUT, ...), ...)
+          - pattern: |
+              $DB.Query($QUERY + $INPUT, ...)
+          - pattern: |
+              $DB.Exec($QUERY + $INPUT, ...)
+      - pattern-not: $DB.Query("...", ...)
+    message: Potential SQL injection. Use parameterized queries with placeholders ($1, $2) instead of string concatenation or fmt.Sprintf.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+      fix: Use db.Query("SELECT * FROM users WHERE id = $1", userID)
+
+  # Command Injection
+  - id: go-command-injection
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD)
+          - pattern: exec.Command("bash", "-c", $CMD)
+          - pattern: exec.Command("/bin/sh", "-c", $CMD)
+          - pattern: exec.Command("/bin/bash", "-c", $CMD)
+      - pattern-not: exec.Command("sh", "-c", "...")
+    message: Potential command injection. Avoid using shell with user input. Use exec.Command with separate arguments instead.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+      fix: Use exec.Command("program", arg1, arg2) with separate arguments
+
+  - id: go-command-injection-concatenation
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command($CMD + $INPUT)
+          - pattern: exec.Command(fmt.Sprintf(..., $INPUT, ...))
+      - pattern-not: exec.Command("...")
+    message: Building command with string concatenation or formatting can lead to command injection. Use separate arguments.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Path Traversal
+  - id: go-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: os.Open($PATH + $INPUT)
+          - pattern: os.Open(filepath.Join($PATH, $INPUT))
+          - pattern: ioutil.ReadFile($PATH + $INPUT)
+          - pattern: os.ReadFile($PATH + $INPUT)
+      - pattern-not-inside: |
+          $INPUT = filepath.Base(...)
+          ...
+      - pattern-not-inside: |
+          $INPUT = filepath.Clean(...)
+          ...
+    message: Potential path traversal vulnerability. Use filepath.Clean() and validate paths against allowlist.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+      owasp: "A01:2021 - Broken Access Control"
+      fix: Use filepath.Clean() and check if path starts with allowed directory
+
+  # Hardcoded Credentials
+  - id: go-hardcoded-credentials
+    patterns:
+      - pattern-either:
+          - pattern: |
+              const $VAR = "..."
+          - pattern: |
+              var $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|secret|apikey|api_key|token|credential|private_key)
+      - pattern-not: const $VAR = os.Getenv(...)
+      - pattern-not: var $VAR = os.Getenv(...)
+    message: Potential hardcoded credential. Use environment variables or secure secret management instead.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      fix: Use os.Getenv() or a secrets manager
+
+  # Weak Cryptography - MD5
+  - id: go-weak-crypto-md5
+    patterns:
+      - pattern-either:
+          - pattern: md5.New()
+          - pattern: md5.Sum(...)
+    message: MD5 is cryptographically broken. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      fix: Use sha256.New() or crypto/blake2b
+
+  # Weak Cryptography - SHA1
+  - id: go-weak-crypto-sha1
+    patterns:
+      - pattern-either:
+          - pattern: sha1.New()
+          - pattern: sha1.Sum(...)
+    message: SHA-1 is deprecated. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      fix: Use sha256.New() or sha512.New()
+
+  # Weak Random - math/rand
+  - id: go-weak-random
+    patterns:
+      - pattern-either:
+          - pattern: rand.Read(...)
+          - pattern: rand.Int()
+          - pattern: rand.Intn(...)
+      - pattern-inside: |
+          import "math/rand"
+          ...
+      - pattern-not-inside: |
+          import "crypto/rand"
+          ...
+    message: math/rand is not cryptographically secure. Use crypto/rand for security-sensitive operations like tokens, keys, or nonces.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+      fix: Use crypto/rand.Read() instead
+
+  # TLS/SSL - InsecureSkipVerify
+  - id: go-tls-skip-verify
+    patterns:
+      - pattern-either:
+          - pattern: |
+              &tls.Config{InsecureSkipVerify: true}
+          - pattern: |
+              tls.Config{..., InsecureSkipVerify: true, ...}
+    message: TLS certificate verification is disabled. This allows man-in-the-middle attacks. Remove InsecureSkipVerify or set to false.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Unsafe Pointer Operations
+  - id: go-unsafe-pointer
+    patterns:
+      - pattern-either:
+          - pattern: unsafe.Pointer(...)
+          - pattern: (*$TYPE)(unsafe.Pointer(...))
+    message: Use of unsafe.Pointer can lead to memory corruption and security vulnerabilities. Avoid unless absolutely necessary and well-tested.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-119: Improper Restriction of Operations within the Bounds of a Memory Buffer"
+      references:
+        - https://go.dev/doc/go1.17#unsafe
+
+  # SQL - Rows.Close not deferred
+  - id: go-sql-rows-not-closed
+    patterns:
+      - pattern: |
+          $ROWS, $ERR := $DB.Query(...)
+          ...
+      - pattern-not-inside: |
+          $ROWS, $ERR := $DB.Query(...)
+          defer $ROWS.Close()
+          ...
+    message: SQL rows should be closed with defer to prevent resource leaks. Add 'defer rows.Close()' after checking error.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-404: Improper Resource Shutdown or Release"
+      fix: Add 'defer rows.Close()' after error check
+
+  # HTTP - Missing Error Check
+  - id: go-http-response-not-checked
+    patterns:
+      - pattern: |
+          $RESP, _ := http.Get(...)
+      - pattern-not: |
+          $RESP, $ERR := http.Get(...)
+          if $ERR != nil { ... }
+    message: HTTP response error is ignored. Always check errors from HTTP requests.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-252: Unchecked Return Value"
+
+  # Context - context.Background in Request
+  - id: go-context-background-in-request
+    patterns:
+      - pattern: http.NewRequestWithContext(context.Background(), ...)
+    message: Using context.Background() in HTTP requests prevents proper cancellation. Use request context or context with timeout.
+    languages: [go]
+    severity: INFO
+    metadata:
+      references:
+        - https://go.dev/blog/context
+
+  # Type Assertion without Check
+  - id: go-type-assertion-no-check
+    patterns:
+      - pattern: $VAR.($TYPE)
+      - pattern-not-inside: |
+          $VAL, $OK := $VAR.($TYPE)
+          ...
+    message: Type assertion without checking can cause panic. Use comma-ok idiom - val, ok := x.(Type).
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-704: Incorrect Type Conversion or Cast"
+      fix: Use val, ok := x.(Type); if !ok { ... }
+
+  # Race Condition - Unprotected Map Access
+  - id: go-unprotected-map-access
+    patterns:
+      - pattern-either:
+          - pattern: |
+              go func() {
+                ...
+                $MAP[$KEY] = $VAL
+                ...
+              }()
+          - pattern: |
+              go func() {
+                ...
+                $VAL := $MAP[$KEY]
+                ...
+              }()
+      - pattern-not-inside: |
+          $MUTEX.Lock()
+          ...
+          $MUTEX.Unlock()
+    message: Concurrent map access without synchronization causes race conditions. Use sync.Mutex or sync.RWMutex to protect map access.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-362: Concurrent Execution using Shared Resource with Improper Synchronization"
+      fix: Use sync.Mutex or sync.Map for concurrent access
+
+  # XML External Entity (XXE)
+  - id: go-xml-decoder-xxe
+    patterns:
+      - pattern: |
+          $DECODER := xml.NewDecoder(...)
+          ...
+      - pattern-not-inside: |
+          $DECODER := xml.NewDecoder(...)
+          $DECODER.Strict = false
+          ...
+    message: XML decoder without XXE protection. While Go's XML parser is safer than others, validate external input and consider using decoder.Strict = true.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      owasp: "A05:2021 - Security Misconfiguration"
+
+  # YAML Unmarshaling
+  - id: go-yaml-unmarshal-untrusted
+    patterns:
+      - pattern: yaml.Unmarshal($INPUT, ...)
+      - pattern-not: yaml.Unmarshal([]byte("..."), ...)
+    message: Unmarshaling YAML from untrusted sources can lead to denial of service or code execution. Validate and sanitize input.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+
+  # Defer in Loop
+  - id: go-defer-in-loop
+    patterns:
+      - pattern-either:
+          - pattern: |
+              for ... {
+                ...
+                defer $FUNC(...)
+                ...
+              }
+          - pattern: |
+              for ... {
+                ...
+                defer $VAR.$METHOD(...)
+                ...
+              }
+    message: Defer in loop accumulates deferred calls until function returns, potentially causing resource exhaustion. Wrap loop body in function or use manual cleanup.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-404: Improper Resource Shutdown or Release"
+      fix: Wrap loop body in anonymous function or cleanup manually
+
+  # HTTP Server without Timeouts
+  - id: go-http-server-no-timeouts
+    patterns:
+      - pattern: |
+          &http.Server{..., Handler: $HANDLER, ...}
+      - pattern-not: |
+          &http.Server{..., ReadTimeout: $RT, WriteTimeout: $WT, ...}
+    message: HTTP server without timeouts is vulnerable to Slowloris attacks. Set ReadTimeout, WriteTimeout, and IdleTimeout.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      fix: Set ReadTimeout, WriteTimeout, IdleTimeout on http.Server
+
+  # Error Handling - fmt.Errorf without %w
+  - id: go-error-wrapping-without-w
+    patterns:
+      - pattern: fmt.Errorf($MSG, $ERR)
+      - pattern-not: fmt.Errorf("...%w...", $ERR)
+    message: Error wrapping without %w prevents error unwrapping. Use %w instead of %v to maintain error chain.
+    languages: [go]
+    severity: INFO
+    metadata:
+      references:
+        - https://go.dev/blog/go1.13-errors
+      fix: "Use fmt.Errorf(\"context: %w\", err) for error wrapping"
+
+  # Goroutine Leak - Missing Context
+  - id: go-goroutine-leak-no-context
+    patterns:
+      - pattern: |
+          go func() {
+            for {
+              ...
+            }
+          }()
+      - pattern-not-inside: |
+          go func($CTX context.Context) {
+            for {
+              select {
+              case <-$CTX.Done():
+                ...
+              }
+            }
+          }(...)
+    message: Infinite goroutine without context cancellation can leak. Use context to enable graceful shutdown.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-404: Improper Resource Shutdown or Release"
+      fix: Pass context and use select with ctx.Done() channel
+
+  # Directory Traversal - filepath.Join
+  - id: go-filepath-join-traversal
+    patterns:
+      - pattern: filepath.Join($BASE, $INPUT)
+      - pattern-not-inside: |
+          $INPUT = filepath.Base(...)
+          ...
+      - pattern-not-inside: |
+          if strings.Contains($INPUT, "..") { ... }
+          ...
+    message: filepath.Join doesn't prevent directory traversal. Clean the input path and verify it starts with base directory.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+      fix: Use filepath.Clean() and strings.HasPrefix() to validate
+
+  # Integer Overflow
+  - id: go-integer-overflow
+    patterns:
+      - pattern: int($VAR)
+      - metavariable-type:
+          metavariable: $VAR
+          types:
+            - int64
+            - uint64
+    message: Converting int64/uint64 to int can cause integer overflow on 32-bit systems. Check bounds or use explicit types.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-190: Integer Overflow or Wraparound"
+
+  # Template Injection - HTML Templates
+  - id: go-template-injection
+    patterns:
+      - pattern-either:
+          - pattern: template.New(...).Parse($TMPL)
+          - pattern: template.Must(template.New(...).Parse($TMPL))
+      - pattern-not: template.New(...).Parse("...")
+    message: Parsing templates from user input can lead to template injection. Only parse trusted template strings.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-94: Improper Control of Generation of Code"
+      owasp: "A03:2021 - Injection"
+
+  # JWT - No Signature Verification
+  - id: go-jwt-no-verification
+    patterns:
+      - pattern: |
+          $TOKEN, $PARTS, $ERR := new(jwt.Parser).ParseUnverified(...)
+    message: ParseUnverified() skips signature validation. Always verify JWT signatures with Parse() or ParseWithClaims().
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+      fix: Use jwt.Parse() or jwt.ParseWithClaims() with key function
+
+  # Regular Expression DoS
+  - id: go-regex-dos
+    patterns:
+      - pattern: regexp.Compile($PATTERN)
+      - metavariable-regex:
+          metavariable: $PATTERN
+          regex: .*(\+\*|\*\+|\*\*|\+\+|\{\d+,\}\*).*
+    message: Regular expression with nested quantifiers may be vulnerable to ReDoS. Simplify regex pattern.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-1333: Inefficient Regular Expression Complexity"
+      references:
+        - https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+
+  # gRPC - Missing TLS Credentials
+  - id: go-grpc-insecure-connection
+    patterns:
+      - pattern: grpc.Dial($ADDR, grpc.WithInsecure())
+    message: gRPC connection without TLS encryption. Use grpc.WithTransportCredentials() for secure connections.
+    languages: [go]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+      owasp: "A02:2021 - Cryptographic Failures"
+      fix: Use grpc.WithTransportCredentials(credentials.NewTLS(...))
+
+  # CGI - Header Injection
+  - id: go-cgi-header-injection
+    patterns:
+      - pattern: $W.Header().Set($KEY, $VAL)
+      - pattern-not: $W.Header().Set("...", "...")
+    message: Setting HTTP headers with unsanitized input can lead to header injection. Validate header values.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-113: Improper Neutralization of CRLF Sequences in HTTP Headers"
+      fix: Strip newline characters (\r\n) from header values
+
+  # URL Redirect - Open Redirect
+  - id: go-open-redirect
+    patterns:
+      - pattern: http.Redirect($W, $R, $URL, ...)
+      - pattern-not: http.Redirect($W, $R, "/...", ...)
+    message: Redirecting to user-controlled URL can lead to open redirect vulnerability. Validate redirect URLs against allowlist.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-601: URL Redirection to Untrusted Site"
+      owasp: "A01:2021 - Broken Access Control"
+      fix: Validate URL and ensure it's relative or on allowlist
+
+  # Database - Prepared Statement Not Used
+  - id: go-sql-prepare-not-used
+    patterns:
+      - pattern: |
+          $STMT, $ERR := $DB.Prepare(...)
+          ...
+      - pattern-not-inside: |
+          $STMT, $ERR := $DB.Prepare(...)
+          defer $STMT.Close()
+          ...
+          $STMT.Exec(...)
+    message: Prepared statement created but not used. Either use it or remove it. Also ensure Close() is deferred.
+    languages: [go]
+    severity: INFO
+    metadata:
+      cwe: "CWE-404: Improper Resource Shutdown or Release"
+
+  # Rate Limiting - Missing Rate Limit
+  - id: go-http-handler-no-rate-limit
+    patterns:
+      - pattern: |
+          func $HANDLER(w http.ResponseWriter, r *http.Request) {
+            ...
+          }
+      - pattern-not-inside: |
+          func $WRAPPER(...) {
+            limiter := ...
+            ...
+          }
+    message: HTTP handler without rate limiting is vulnerable to abuse. Consider implementing rate limiting middleware.
+    languages: [go]
+    severity: INFO
+    metadata:
+      cwe: "CWE-770: Allocation of Resources Without Limits or Throttling"
+
+  # Panic in Goroutine
+  - id: go-panic-in-goroutine
+    patterns:
+      - pattern: |
+          go func() {
+            ...
+            panic(...)
+            ...
+          }()
+      - pattern-not-inside: |
+          go func() {
+            defer func() {
+              if r := recover(); r != nil {
+                ...
+              }
+            }()
+            ...
+          }()
+    message: Panic in goroutine crashes entire program. Add defer recover() to handle panics gracefully.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-755: Improper Handling of Exceptional Conditions"
+      fix: Add defer recover() at start of goroutine
+
+  # Empty Password Check
+  - id: go-empty-password-check
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if $PASSWORD == "" { ... }
+          - pattern: |
+              if len($PASSWORD) == 0 { ... }
+      - metavariable-regex:
+          metavariable: $PASSWORD
+          regex: (?i).*password.*
+    message: Checking for empty password only is insufficient. Validate password strength, length, and complexity.
+    languages: [go]
+    severity: INFO
+    metadata:
+      cwe: "CWE-521: Weak Password Requirements"
+      owasp: "A07:2021 - Identification and Authentication Failures"

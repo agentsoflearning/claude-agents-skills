@@ -1,0 +1,428 @@
+# Semgrep Rules for Python
+# Optimized for Flask, Django, FastAPI, and general Python security
+# Security-focused patterns for common vulnerabilities
+
+rules:
+  # Command Injection
+  - id: python-command-injection-os-system
+    patterns:
+      - pattern-either:
+          - pattern: os.system($CMD)
+          - pattern: subprocess.call($CMD, shell=True, ...)
+          - pattern: subprocess.run($CMD, shell=True, ...)
+          - pattern: subprocess.Popen($CMD, shell=True, ...)
+      - pattern-not: os.system("...")
+      - pattern-not: subprocess.call("...", shell=True, ...)
+    message: Potential command injection. Avoid shell=True and use subprocess with list arguments instead of string concatenation.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+      references:
+        - https://docs.python.org/3/library/subprocess.html#security-considerations
+
+  - id: python-command-injection-eval
+    patterns:
+      - pattern-either:
+          - pattern: eval($INPUT)
+          - pattern: exec($INPUT)
+          - pattern: compile($INPUT, ...)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+    message: Use of eval() or exec() with untrusted input can lead to code injection. Consider using ast.literal_eval() for safe evaluation.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp: "A03:2021 - Injection"
+
+  # SQL Injection
+  - id: python-sql-injection-string-format
+    patterns:
+      - pattern-either:
+          - pattern: cursor.execute($QUERY % $INPUT, ...)
+          - pattern: cursor.execute($QUERY.format($INPUT), ...)
+          - pattern: cursor.execute(f"...{$INPUT}...", ...)
+          - pattern: cursor.execute($QUERY + $INPUT, ...)
+      - pattern-not: cursor.execute("...", ...)
+    message: Potential SQL injection. Use parameterized queries instead of string formatting.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+      fix: Use parameterized queries - cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+
+  - id: django-raw-sql-injection
+    patterns:
+      - pattern-either:
+          - pattern: Model.objects.raw($QUERY % $INPUT, ...)
+          - pattern: Model.objects.raw(f"...{$INPUT}...", ...)
+          - pattern: connection.cursor().execute($QUERY + $INPUT, ...)
+    message: Django raw SQL query vulnerable to SQL injection. Use parameterized queries or ORM methods.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - https://docs.djangoproject.com/en/stable/topics/security/#sql-injection-protection
+
+  # Path Traversal
+  - id: python-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: open($PATH + $INPUT, ...)
+          - pattern: open(f"...{$INPUT}...", ...)
+          - pattern: pathlib.Path($PATH) / $INPUT
+      - pattern-not-inside: |
+          $INPUT = os.path.basename(...)
+          ...
+      - pattern-not-inside: |
+          $INPUT = pathlib.Path(...).name
+          ...
+    message: Potential path traversal vulnerability. Validate file paths using os.path.basename() or check against allowlist.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Insecure Deserialization
+  - id: python-insecure-deserialization-pickle
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($INPUT)
+          - pattern: pickle.load($INPUT)
+          - pattern: cPickle.loads($INPUT)
+          - pattern: cPickle.load($INPUT)
+      - pattern-not: pickle.loads(b"...")
+    message: Deserializing untrusted data with pickle can lead to arbitrary code execution. Use JSON or safer alternatives.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data
+
+  - id: python-yaml-unsafe-load
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load($INPUT)
+          - pattern: yaml.load($INPUT, Loader=yaml.Loader)
+          - pattern: yaml.load($INPUT, Loader=yaml.UnsafeLoader)
+      - pattern-not: yaml.load("...", ...)
+    message: yaml.load() without SafeLoader can execute arbitrary code. Use yaml.safe_load() instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      fix: Use yaml.safe_load() instead
+
+  # Hardcoded Secrets
+  - id: python-hardcoded-password
+    patterns:
+      - pattern-either:
+          - pattern: $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (.*password.*|.*secret.*|.*api[_-]?key.*|.*token.*|.*credential.*)
+      - pattern-not: $VAR = os.getenv(...)
+      - pattern-not: $VAR = os.environ.get(...)
+      - pattern-not: $VAR = settings.$SETTING
+    message: Potential hardcoded secret. Use environment variables or secure secret management.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  # Flask Security Issues
+  - id: flask-debug-enabled
+    patterns:
+      - pattern-either:
+          - pattern: app.run(debug=True, ...)
+          - pattern: app.debug = True
+    message: Flask debug mode should never be enabled in production. It exposes sensitive information and allows code execution.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-215: Information Exposure Through Debug Information"
+      references:
+        - https://flask.palletsprojects.com/en/stable/debugging/
+
+  - id: flask-send-file-path-traversal
+    patterns:
+      - pattern: send_file($PATH, ...)
+      - pattern-not: send_file(os.path.join(...), ...)
+      - pattern-not-inside: |
+          $PATH = secure_filename(...)
+          ...
+    message: send_file() with user input can lead to path traversal. Use secure_filename() to sanitize paths.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+
+  - id: flask-missing-csrf
+    patterns:
+      - pattern: |
+          @app.route($ROUTE, methods=["POST", ...])
+          def $FUNC(...):
+            ...
+      - pattern-not-inside: |
+          from flask_wtf.csrf import CSRFProtect
+          ...
+    message: Flask POST endpoint without CSRF protection. Consider using Flask-WTF CSRFProtect.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-352: Cross-Site Request Forgery"
+      owasp: "A01:2021 - Broken Access Control"
+
+  - id: flask-response-splitting
+    patterns:
+      - pattern: make_response(..., headers={..., $KEY:$VAL, ...})
+      - pattern-not: make_response(..., headers={..., $KEY:"...", ...})
+    message: Potential HTTP response splitting. Sanitize header values to prevent CRLF injection.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-113: Improper Neutralization of CRLF Sequences in HTTP Headers"
+
+  # Django Security Issues
+  - id: django-debug-enabled
+    patterns:
+      - pattern: DEBUG = True
+      - pattern-inside: |
+          # settings.py
+          ...
+    message: Django DEBUG should be False in production. It exposes sensitive configuration and stack traces.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-215: Information Exposure Through Debug Information"
+
+  - id: django-unsafe-queryset-extra
+    patterns:
+      - pattern: Model.objects.extra(where=[$CLAUSE, ...], ...)
+      - pattern-not: Model.objects.extra(where=["...", ...], ...)
+    message: Django .extra() with dynamic where clause can lead to SQL injection. Use ORM methods or parameterized queries.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+
+  - id: django-xss-mark-safe
+    patterns:
+      - pattern-either:
+          - pattern: mark_safe($INPUT)
+          - pattern: SafeString($INPUT)
+      - pattern-not: mark_safe("...")
+    message: mark_safe() with user input can lead to XSS. Ensure input is properly sanitized or use template escaping.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-79: Cross-site Scripting (XSS)"
+      owasp: "A03:2021 - Injection"
+
+  - id: django-secret-key-hardcoded
+    patterns:
+      - pattern: SECRET_KEY = "..."
+      - pattern-not: SECRET_KEY = os.environ.get(...)
+      - pattern-not: SECRET_KEY = os.getenv(...)
+    message: Django SECRET_KEY should never be hardcoded. Use environment variables.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  # FastAPI Security Issues
+  - id: fastapi-missing-dependency-injection
+    patterns:
+      - pattern: |
+          @app.get($ROUTE)
+          def $FUNC($PARAM: str, ...):
+            ...
+      - pattern-not-inside: |
+          from fastapi import Depends
+          ...
+    message: Consider using FastAPI dependency injection for authentication and validation.
+    languages: [python]
+    severity: INFO
+
+  - id: fastapi-plain-text-password
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $FUNC(..., password: str, ...):
+                ...
+                $DB.save(..., password=password, ...)
+          - pattern: |
+              user.password = $PASSWORD
+      - pattern-not-inside: |
+          from passlib.context import CryptContext
+          ...
+      - pattern-not-inside: |
+          import bcrypt
+          ...
+    message: Storing passwords in plain text. Use password hashing (bcrypt, argon2) before storage.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-256: Plaintext Storage of a Password"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # XML External Entity (XXE)
+  - id: python-xxe-etree
+    patterns:
+      - pattern-either:
+          - pattern: xml.etree.ElementTree.parse($INPUT)
+          - pattern: xml.etree.ElementTree.fromstring($INPUT)
+          - pattern: lxml.etree.parse($INPUT)
+      - pattern-not: xml.etree.ElementTree.parse("...")
+    message: XML parsing without disabling external entities can lead to XXE attacks. Use defusedxml instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      owasp: "A05:2021 - Security Misconfiguration"
+      fix: Use defusedxml.ElementTree instead
+
+  # LDAP Injection
+  - id: python-ldap-injection
+    patterns:
+      - pattern: ldap.search($FILTER % $INPUT, ...)
+      - pattern-not: ldap.search("...", ...)
+    message: LDAP query with string formatting can lead to LDAP injection. Escape user input properly.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-90: LDAP Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Insecure Randomness
+  - id: python-weak-random
+    patterns:
+      - pattern-either:
+          - pattern: random.random()
+          - pattern: random.randint(...)
+          - pattern: random.choice(...)
+      - pattern-inside: |
+          def $FUNC(...):
+            ...
+            $TOKEN = ...random...
+            ...
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: (.*token.*|.*secret.*|.*key.*|.*session.*|.*password.*)
+    message: random module is not cryptographically secure. Use secrets module for security-sensitive operations.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+      fix: Use secrets.token_hex() or secrets.token_urlsafe()
+
+  # Weak Cryptography
+  - id: python-weak-hash-md5
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.new('md5', ...)
+    message: MD5 is cryptographically broken. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: python-weak-hash-sha1
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.sha1(...)
+          - pattern: hashlib.new('sha1', ...)
+    message: SHA-1 is deprecated. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  # SSL/TLS Issues
+  - id: python-ssl-no-verification
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(..., verify=False, ...)
+          - pattern: requests.post(..., verify=False, ...)
+          - pattern: urllib.request.urlopen(..., context=ssl._create_unverified_context(), ...)
+    message: Disabling SSL certificate verification allows man-in-the-middle attacks. Remove verify=False.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Template Injection (Jinja2)
+  - id: python-jinja2-autoescape-disabled
+    patterns:
+      - pattern: Environment(autoescape=False, ...)
+    message: Jinja2 autoescape disabled can lead to XSS. Enable autoescape or use MarkupSafe.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-79: Cross-site Scripting (XSS)"
+
+  - id: python-template-injection
+    patterns:
+      - pattern-either:
+          - pattern: Template($TEMPLATE).render(...)
+          - pattern: Environment(...).from_string($TEMPLATE)
+      - pattern-not: Template("...").render(...)
+      - pattern-not: Environment(...).from_string("...")
+    message: Server-side template injection (SSTI) can lead to RCE. Never use user input directly in templates.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-94: Improper Control of Generation of Code"
+      owasp: "A03:2021 - Injection"
+
+  # Race Conditions
+  - id: python-toctou-file-check
+    patterns:
+      - pattern: |
+          if os.path.exists($PATH):
+            ...
+            open($PATH, ...)
+    message: Time-of-check to time-of-use (TOCTOU) race condition. Use try/except instead of checking file existence.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition"
+
+  # Assert in Production Code
+  - id: python-assert-in-prod
+    patterns:
+      - pattern: assert $CONDITION, ...
+      - pattern-not-inside: |
+          def test_$FUNC(...):
+            ...
+      - pattern-not-inside: |
+          class Test$CLASS(...):
+            ...
+    message: assert statements are removed when Python is run with -O flag. Don't use for security checks or validation.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-703: Improper Check or Handling of Exceptional Conditions"
+
+  # Logging Sensitive Data
+  - id: python-log-sensitive-data
+    patterns:
+      - pattern-either:
+          - pattern: logger.$METHOD(..., password=$VAR, ...)
+          - pattern: logging.$METHOD(..., password=$VAR, ...)
+          - pattern: print(..., password=$VAR, ...)
+    message: Logging sensitive data like passwords. Ensure sensitive information is redacted before logging.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      owasp: "A09:2021 - Security Logging and Monitoring Failures"

@@ -1,0 +1,278 @@
+# GitLab CI/CD Configuration for Secure-Push Security Scanning
+# Merge this with your existing .gitlab-ci.yml or use as a new file
+
+# Define stages
+stages:
+  - security-scan
+  - security-report
+
+# Common configuration for all security jobs
+.security-base:
+  stage: security-scan
+  only:
+    - branches
+    - merge_requests
+  cache:
+    key: security-tools-$CI_COMMIT_REF_SLUG
+    paths:
+      - .trivy-cache/
+
+# Variables
+variables:
+  # Severity thresholds
+  SEVERITY_BLOCK: "CRITICAL,HIGH"
+  SEVERITY_WARN: "MEDIUM,LOW"
+  # Artifact retention
+  REPORT_RETENTION_DAYS: "30"
+
+# Job 1: Secret Scanning with Gitleaks
+gitleaks-scan:
+  extends: .security-base
+  image: zricethezav/gitleaks:latest
+  script:
+    - echo "🔍 Running Gitleaks secret detection..."
+    - |
+      if [ -f .claude/skills/secure-push/configs/gitleaks.toml ]; then
+        CONFIG_ARG="--config=.claude/skills/secure-push/configs/gitleaks.toml"
+      else
+        CONFIG_ARG=""
+      fi
+    - |
+      gitleaks detect \
+        $CONFIG_ARG \
+        --report-path=gitleaks-report.json \
+        --report-format=json \
+        --no-banner \
+        --redact || EXIT_CODE=$?
+    - |
+      if [ -f gitleaks-report.json ]; then
+        SECRET_COUNT=$(jq 'length' gitleaks-report.json)
+        echo "Found $SECRET_COUNT secret(s)"
+        if [ "$SECRET_COUNT" -gt 0 ]; then
+          echo "::error::Secrets detected in code!"
+          cat gitleaks-report.json
+          exit 1
+        fi
+      fi
+    - echo "✅ No secrets detected"
+  artifacts:
+    when: always
+    reports:
+      # GitLab supports secret detection reports
+      secret_detection: gitleaks-report.json
+    paths:
+      - gitleaks-report.json
+    expire_in: ${REPORT_RETENTION_DAYS} days
+  allow_failure: false
+
+# Job 2: SAST Code Analysis with Semgrep
+semgrep-scan:
+  extends: .security-base
+  image: semgrep/semgrep:latest
+  script:
+    - echo "🔎 Running Semgrep code analysis..."
+    - |
+      semgrep scan \
+        --config=p/security-audit \
+        --config=p/owasp-top-ten \
+        --config=p/cwe-top-25 \
+        --config=.claude/skills/secure-push/configs/semgrep.yaml \
+        --config=.claude/skills/secure-push/configs/languages/ \
+        --sarif \
+        --output=semgrep-report.sarif \
+        --metrics=off \
+        --quiet \
+        . || EXIT_CODE=$?
+    - |
+      # Also generate JSON for easier parsing
+      semgrep scan \
+        --config=p/security-audit \
+        --config=.claude/skills/secure-push/configs/semgrep.yaml \
+        --json \
+        --output=semgrep-report.json \
+        --metrics=off \
+        --quiet \
+        . || true
+    - |
+      # Check for blocking severity
+      if [ -f semgrep-report.json ]; then
+        ERROR_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-report.json)
+        echo "Found $ERROR_COUNT high-severity code issues"
+        if [ "$ERROR_COUNT" -gt 0 ]; then
+          echo "::error::High-severity code vulnerabilities detected!"
+          jq '.results[] | select(.extra.severity == "ERROR")' semgrep-report.json
+          exit 1
+        fi
+      fi
+    - echo "✅ Code analysis passed"
+  artifacts:
+    when: always
+    reports:
+      # GitLab SAST report format
+      sast: semgrep-report.sarif
+    paths:
+      - semgrep-report.sarif
+      - semgrep-report.json
+    expire_in: ${REPORT_RETENTION_DAYS} days
+  allow_failure: false
+
+# Job 3: Dependency Scanning with Trivy
+trivy-scan:
+  extends: .security-base
+  image: aquasec/trivy:latest
+  script:
+    - echo "🔬 Running Trivy dependency scan..."
+    - mkdir -p .trivy-cache
+    - |
+      trivy fs \
+        --severity ${SEVERITY_BLOCK},${SEVERITY_WARN} \
+        --format json \
+        --output trivy-report.json \
+        --cache-dir .trivy-cache \
+        --timeout 10m \
+        .
+    - |
+      # Generate GitLab dependency scanning report
+      trivy fs \
+        --severity ${SEVERITY_BLOCK},${SEVERITY_WARN} \
+        --format template \
+        --template '@contrib/gitlab.tpl' \
+        --output gl-dependency-scanning-report.json \
+        --cache-dir .trivy-cache \
+        .
+    - |
+      # Check for blocking vulnerabilities
+      CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-report.json)
+      HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-report.json)
+      MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-report.json)
+      LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length' trivy-report.json)
+
+      echo "Vulnerability Summary:"
+      echo "  Critical: $CRITICAL"
+      echo "  High: $HIGH"
+      echo "  Medium: $MEDIUM"
+      echo "  Low: $LOW"
+
+      if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+        echo "::error::Found $CRITICAL critical and $HIGH high severity vulnerabilities"
+        exit 1
+      fi
+    - echo "✅ No critical or high vulnerabilities found"
+  artifacts:
+    when: always
+    reports:
+      # GitLab dependency scanning format
+      dependency_scanning: gl-dependency-scanning-report.json
+    paths:
+      - trivy-report.json
+      - gl-dependency-scanning-report.json
+    expire_in: ${REPORT_RETENTION_DAYS} days
+  allow_failure: false
+
+# Job 4: Container Image Scanning (if you build Docker images)
+trivy-container-scan:
+  extends: .security-base
+  image: aquasec/trivy:latest
+  script:
+    - echo "🐳 Running Trivy container image scan..."
+    - |
+      if [ -n "$CI_REGISTRY_IMAGE" ]; then
+        trivy image \
+          --severity ${SEVERITY_BLOCK} \
+          --format json \
+          --output trivy-container-report.json \
+          --cache-dir .trivy-cache \
+          ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG}
+      else
+        echo "No container image to scan (CI_REGISTRY_IMAGE not set)"
+        exit 0
+      fi
+  artifacts:
+    when: always
+    paths:
+      - trivy-container-report.json
+    expire_in: ${REPORT_RETENTION_DAYS} days
+  allow_failure: true
+  only:
+    - branches
+  # Only run if Dockerfile exists
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+      exists:
+        - Dockerfile
+
+# Job 5: Security Report Summary
+security-summary:
+  stage: security-report
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache jq
+  script:
+    - echo "# 🔒 Security Scan Summary" > security-summary.md
+    - echo "" >> security-summary.md
+    - echo "**Pipeline:** $CI_PIPELINE_ID" >> security-summary.md
+    - echo "**Branch:** $CI_COMMIT_REF_NAME" >> security-summary.md
+    - echo "**Commit:** $CI_COMMIT_SHORT_SHA" >> security-summary.md
+    - echo "" >> security-summary.md
+    - echo "## Results" >> security-summary.md
+    - echo "" >> security-summary.md
+
+    # Secret Scan
+    - |
+      if [ -f gitleaks-report.json ]; then
+        SECRET_COUNT=$(jq 'length' gitleaks-report.json)
+        if [ "$SECRET_COUNT" -eq 0 ]; then
+          echo "✅ **Secret Scanning:** No secrets detected" >> security-summary.md
+        else
+          echo "❌ **Secret Scanning:** $SECRET_COUNT secret(s) found" >> security-summary.md
+        fi
+      fi
+
+    # Code Scan
+    - |
+      if [ -f semgrep-report.json ]; then
+        ERROR_COUNT=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-report.json)
+        WARNING_COUNT=$(jq '[.results[] | select(.extra.severity == "WARNING")] | length' semgrep-report.json)
+        if [ "$ERROR_COUNT" -eq 0 ]; then
+          echo "✅ **Code Analysis:** No critical issues (Warnings: $WARNING_COUNT)" >> security-summary.md
+        else
+          echo "❌ **Code Analysis:** $ERROR_COUNT critical issues found" >> security-summary.md
+        fi
+      fi
+
+    # Dependency Scan
+    - |
+      if [ -f trivy-report.json ]; then
+        CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-report.json)
+        HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-report.json)
+        MEDIUM=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length' trivy-report.json)
+        LOW=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length' trivy-report.json)
+
+        echo "**Dependency Vulnerabilities:**" >> security-summary.md
+        echo "- Critical: $CRITICAL" >> security-summary.md
+        echo "- High: $HIGH" >> security-summary.md
+        echo "- Medium: $MEDIUM" >> security-summary.md
+        echo "- Low: $LOW" >> security-summary.md
+      fi
+
+    - cat security-summary.md
+  artifacts:
+    when: always
+    paths:
+      - security-summary.md
+    expire_in: ${REPORT_RETENTION_DAYS} days
+  dependencies:
+    - gitleaks-scan
+    - semgrep-scan
+    - trivy-scan
+  allow_failure: true
+
+# Scheduled security scans (weekly)
+scheduled-security-scan:
+  extends: .security-base
+  script:
+    - echo "Running scheduled comprehensive security scan..."
+    # Run all security jobs
+  only:
+    - schedules
+  allow_failure: true

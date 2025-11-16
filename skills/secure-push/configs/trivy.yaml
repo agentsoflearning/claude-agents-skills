@@ -1,0 +1,164 @@
+# Trivy Configuration for Secure-Push
+# Dependency and vulnerability scanning
+# https://aquasecurity.github.io/trivy/
+
+# Scan settings
+scan:
+  # Security checks to enable
+  security-checks:
+    - vuln        # Vulnerabilities
+    - config      # Misconfigurations
+    - secret      # Secrets (duplicate check with Gitleaks, but good redundancy)
+    - license     # License issues
+
+  # Scanners to use
+  scanners:
+    - vuln
+    - secret
+    - misconfig
+
+# Vulnerability settings
+vulnerability:
+  # Type of vulnerabilities to detect
+  type:
+    - os          # Operating system packages
+    - library     # Application dependencies
+
+  # Severity levels to report (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN)
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+    - LOW
+
+# Report settings
+report:
+  # Report format
+  format: json
+
+  # Include suppressed vulnerabilities
+  show-suppressed: false
+
+# Database settings
+db:
+  # Skip database update (set to false in CI/CD for latest CVEs)
+  skip-update: false
+
+  # Database repository
+  repository: ghcr.io/aquasecurity/trivy-db
+
+# Ignore settings
+ignore:
+  # Ignore unfixed vulnerabilities (vulnerabilities without patches)
+  unfixed: false
+
+  # Policy file for custom ignores (optional)
+  # policy: .trivyignore.rego
+
+# Skip files/directories
+skip-files:
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/vendor/**"
+  - "**/node_modules/**"
+  - "**/.venv/**"
+  - "**/venv/**"
+  - "**/build/**"
+  - "**/dist/**"
+  - "**/.next/**"
+  - "**/.nuxt/**"
+
+skip-dirs:
+  - node_modules
+  - vendor
+  - .venv
+  - venv
+  - env
+  - build
+  - dist
+  - target
+  - .git
+  - __pycache__
+  - .pytest_cache
+  - .mypy_cache
+  - coverage
+
+# Cache settings
+cache:
+  # Cache directory
+  dir: .trivy-cache
+
+# Timeout settings
+timeout:
+  # Timeout for scanning (default: 5m)
+  scan: 5m
+
+# Misconfiguration scanning (for IaC files)
+misconfig:
+  # Include built-in checks
+  include-non-failures: false
+
+  # Severity threshold
+  severity:
+    - CRITICAL
+    - HIGH
+
+  # Terraform checks
+  terraform:
+    # Scan Terraform files
+    enabled: true
+
+  # CloudFormation checks
+  cloudformation:
+    enabled: true
+
+  # Dockerfile checks
+  dockerfile:
+    enabled: true
+
+  # Kubernetes checks
+  kubernetes:
+    enabled: true
+
+# Secret scanning settings
+secret:
+  # Secret scanning configuration
+  config: ""  # Use default config
+
+# License scanning
+license:
+  # License categories to flag
+  forbidden:
+    - GPL-3.0
+    - AGPL-3.0
+    # Add other licenses your organization forbids
+
+  # License categories to allow
+  allowed:
+    - MIT
+    - Apache-2.0
+    - BSD-3-Clause
+    - BSD-2-Clause
+    - ISC
+    - PSF
+    # Add other licenses your organization allows
+
+# Exceptions/Allowlist
+# Create a .trivyignore file in project root to suppress specific CVEs
+# Example .trivyignore:
+#   CVE-2021-1234
+#   CVE-2022-5678 # Reason: False positive for our use case
+
+# Exit code
+exit-code: 0  # Don't exit with error (we handle this in pre-push-scan.sh)
+
+# Output settings
+output:
+  # Progress bar
+  progress: false
+
+  # Quiet mode
+  quiet: false
+
+  # Debug mode
+  debug: false

@@ -1,0 +1,322 @@
+# Semgrep Rules for JavaScript/TypeScript
+# Optimized for Node.js, React, Vue, Angular, Express, Next.js
+# Security-focused patterns for common vulnerabilities
+
+rules:
+  # Command Injection
+  - id: js-command-injection-exec
+    patterns:
+      - pattern-either:
+          - pattern: require('child_process').exec($INPUT, ...)
+          - pattern: require('child_process').execSync($INPUT, ...)
+          - pattern: child_process.exec($INPUT, ...)
+          - pattern: child_process.execSync($INPUT, ...)
+      - pattern-not: require('child_process').exec("...", ...)
+      - pattern-not: child_process.exec("...", ...)
+    message: Potential command injection via child_process.exec(). User input should never be passed directly to exec(). Use execFile() or spawn() with array arguments instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+      references:
+        - https://owasp.org/www-community/attacks/Command_Injection
+
+  - id: js-command-injection-eval
+    patterns:
+      - pattern-either:
+          - pattern: eval($INPUT)
+          - pattern: new Function($INPUT)
+          - pattern: setTimeout($INPUT, ...)
+          - pattern: setInterval($INPUT, ...)
+      - pattern-not: eval("...")
+      - pattern-not: new Function("...")
+    message: Use of eval() or Function constructor with potentially untrusted input. This can lead to code injection vulnerabilities.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp: "A03:2021 - Injection"
+
+  # SQL Injection (for various ORMs/query builders)
+  - id: js-sql-injection-raw-query
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query($QUERY + $INPUT, ...)
+          - pattern: $DB.query(`...${$INPUT}...`, ...)
+          - pattern: $DB.raw($QUERY + $INPUT, ...)
+          - pattern: $DB.raw(`...${$INPUT}...`, ...)
+          - pattern: sequelize.query($QUERY + $INPUT, ...)
+          - pattern: sequelize.query(`...${$INPUT}...`, ...)
+      - pattern-not: $DB.query("...", ...)
+    message: Potential SQL injection. Use parameterized queries or ORM methods instead of string concatenation.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+
+  # XSS Vulnerabilities (React-specific)
+  - id: react-dangerously-set-inner-html
+    pattern: dangerouslySetInnerHTML={{__html:$INPUT}}
+    message: Using dangerouslySetInnerHTML with user input can lead to XSS. Sanitize input with DOMPurify or similar library.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-79: Cross-site Scripting (XSS)"
+      owasp: "A03:2021 - Injection"
+
+  - id: react-href-javascript
+    patterns:
+      - pattern-either:
+          - pattern: <a href={"javascript:" + $INPUT}>...</a>
+          - pattern: <a href={`javascript:${$INPUT}`}>...</a>
+    message: Using javascript: URLs in href can lead to XSS vulnerabilities.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-79: Cross-site Scripting (XSS)"
+
+  # Path Traversal
+  - id: js-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: fs.readFile($PATH + $INPUT, ...)
+          - pattern: fs.readFileSync($PATH + $INPUT, ...)
+          - pattern: fs.writeFile($PATH + $INPUT, ...)
+          - pattern: fs.writeFileSync($PATH + $INPUT, ...)
+          - pattern: fs.readFile(`...${$INPUT}...`, ...)
+          - pattern: fs.writeFile(`...${$INPUT}...`, ...)
+      - pattern-not-inside: |
+          $INPUT = path.basename(...)
+          ...
+      - pattern-not-inside: |
+          $INPUT = path.normalize(...)
+          ...
+    message: Potential path traversal vulnerability. Validate and sanitize file paths using path.basename() or path.normalize().
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Insecure Randomness
+  - id: js-insecure-random
+    patterns:
+      - pattern-either:
+          - pattern: Math.random()
+      - pattern-inside: |
+          function $FUNC(...) {
+            ...
+            $TOKEN = ...Math.random()...
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: (.*token.*|.*secret.*|.*key.*|.*session.*|.*password.*)
+    message: Math.random() is not cryptographically secure. Use crypto.randomBytes() for security-sensitive operations.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+
+  # Hardcoded Secrets
+  - id: js-hardcoded-secret
+    patterns:
+      - pattern-either:
+          - pattern: |
+              const $VAR = "..."
+          - pattern: |
+              let $VAR = "..."
+          - pattern: |
+              var $VAR = "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (.*password.*|.*secret.*|.*api[_-]?key.*|.*token.*|.*credential.*)
+      - pattern-not: const $VAR = process.env.$ENV
+      - pattern-not: let $VAR = process.env.$ENV
+    message: Potential hardcoded secret. Use environment variables or secure secret management instead.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  # Insecure HTTP
+  - id: js-axios-insecure-http
+    patterns:
+      - pattern-either:
+          - pattern: axios.get("http://...", ...)
+          - pattern: axios.post("http://...", ...)
+          - pattern: axios.put("http://...", ...)
+          - pattern: axios.delete("http://...", ...)
+          - pattern: fetch("http://...", ...)
+      - pattern-not: axios.get("http://localhost...", ...)
+      - pattern-not: axios.get("http://127.0.0.1...", ...)
+      - pattern-not: fetch("http://localhost...", ...)
+    message: Using insecure HTTP instead of HTTPS. Data transmitted over HTTP is not encrypted.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+
+  # Prototype Pollution
+  - id: js-prototype-pollution
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ[$KEY] = $VAL
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (__proto__|constructor|prototype)
+    message: Potential prototype pollution vulnerability. Validate object keys to prevent __proto__ or constructor manipulation.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-1321: Improperly Controlled Modification of Object Prototype Attributes"
+      references:
+        - https://portswigger.net/web-security/prototype-pollution
+
+  # JWT Security Issues
+  - id: js-jwt-none-algorithm
+    patterns:
+      - pattern-either:
+          - pattern: jwt.verify($TOKEN, ..., {algorithms:["none"], ...})
+          - pattern: jwt.decode($TOKEN, ..., {algorithms:["none"], ...})
+    message: JWT algorithm 'none' allows tokens without signature verification. Never use 'none' algorithm in production.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+
+  - id: js-jwt-no-verify
+    patterns:
+      - pattern: jwt.decode($TOKEN, ...)
+      - pattern-not: jwt.verify($TOKEN, ...)
+    message: Using jwt.decode() without verification. Use jwt.verify() to validate token signatures.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+
+  # Express.js Security
+  - id: express-disable-helmet
+    patterns:
+      - pattern: app.disable('$HEADER')
+      - metavariable-regex:
+          metavariable: $HEADER
+          regex: (x-powered-by)
+    message: Disabling security headers can expose application details. Consider using helmet middleware.
+    languages: [javascript, typescript]
+    severity: INFO
+    metadata:
+      references:
+        - https://www.npmjs.com/package/helmet
+
+  - id: express-missing-helmet
+    patterns:
+      - pattern-not-inside: |
+          const helmet = require('helmet')
+          ...
+          app.use(helmet())
+      - pattern: |
+          const express = require('express')
+          const app = express()
+          ...
+    message: Consider using helmet middleware to set security-related HTTP headers.
+    languages: [javascript, typescript]
+    severity: INFO
+    fix: Add helmet middleware - app.use(require('helmet')())
+
+  # CSRF Protection
+  - id: express-missing-csrf
+    patterns:
+      - pattern-either:
+          - pattern: |
+              app.post($ROUTE, ...)
+          - pattern: |
+              app.put($ROUTE, ...)
+          - pattern: |
+              app.delete($ROUTE, ...)
+      - pattern-not-inside: |
+          const csrf = require('csurf')
+          ...
+      - pattern-not-inside: |
+          app.use(csrf(...))
+          ...
+    message: POST/PUT/DELETE endpoints should be protected against CSRF attacks. Consider using csurf middleware.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-352: Cross-Site Request Forgery"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # RegEx DoS
+  - id: js-regex-dos
+    patterns:
+      - pattern-either:
+          - pattern: new RegExp($PATTERN, ...)
+      - metavariable-regex:
+          metavariable: $PATTERN
+          regex: .*(\+\*|\*\+|\*\*|\+\+|\{\d+,\}\*).*
+    message: Regular expression may be vulnerable to ReDoS (Regular Expression Denial of Service). Avoid nested quantifiers.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-1333: Inefficient Regular Expression Complexity"
+      references:
+        - https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+
+  # NoSQL Injection (MongoDB)
+  - id: js-mongodb-nosql-injection
+    patterns:
+      - pattern-either:
+          - pattern: collection.find({$KEY:$INPUT})
+          - pattern: collection.findOne({$KEY:$INPUT})
+          - pattern: Model.find({$KEY:$INPUT})
+          - pattern: Model.findOne({$KEY:$INPUT})
+      - pattern-not: collection.find({$KEY:"..."})
+      - pattern-not: Model.find({$KEY:"..."})
+    message: Potential NoSQL injection. Validate and sanitize user input before using in MongoDB queries.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-943: Improper Neutralization of Special Elements in Data Query Logic"
+      owasp: "A03:2021 - Injection"
+
+  # Open Redirect
+  - id: js-open-redirect
+    patterns:
+      - pattern-either:
+          - pattern: res.redirect($INPUT)
+          - pattern: window.location = $INPUT
+          - pattern: window.location.href = $INPUT
+      - pattern-not: res.redirect("/...")
+      - pattern-not: window.location = "/..."
+    message: Potential open redirect vulnerability. Validate redirect URLs against allowlist.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-601: URL Redirection to Untrusted Site"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # Weak Cryptography
+  - id: js-weak-crypto-md5
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createHash('md5')
+          - pattern: crypto.createHash("md5")
+    message: MD5 is cryptographically broken. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: js-weak-crypto-sha1
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createHash('sha1')
+          - pattern: crypto.createHash("sha1")
+    message: SHA-1 is deprecated. Use SHA-256 or stronger for security-sensitive operations.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
